@@ -99,6 +99,37 @@ def _memory_section() -> str:
     return ""
 
 
+def _escape_xml(text: str) -> str:
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
+    )
+
+
+def _format_skills_for_prompt(skills: list[dict[str, str]]) -> str:
+    if not skills:
+        return ""
+
+    lines = [
+        "The following skills provide specialized instructions for specific tasks.",
+        "Use read_file to load a skill's SKILL.md when the task clearly matches its description.",
+        "When a skill file references a relative path, resolve it against the skill directory.",
+        "",
+        "<available_skills>",
+    ]
+    for skill in skills:
+        lines.append("  <skill>")
+        lines.append(f"    <name>{_escape_xml(skill['name'])}</name>")
+        lines.append(f"    <description>{_escape_xml(skill['description'])}</description>")
+        lines.append(f"    <location>{_escape_xml(skill['path'])}</location>")
+        lines.append("  </skill>")
+    lines.append("</available_skills>")
+    return "\n".join(lines)
+
+
 
 def _list_skills() -> list[dict[str, str]]:
     skills_root = WORKSPACE / "skills"
@@ -152,22 +183,23 @@ def build_system_prompt() -> str:
         system_prompt,
         *date_rules,
         "",
-        "You have access to the following skills.",
-        "A skill description is the primary trigger signal for when to use it.",
-        "If a skill is relevant, inspect its SKILL.md with shell tools before acting.",
+        "## Skills",
+        "Before replying: scan <available_skills> <description> entries.",
+        "- If exactly one skill clearly applies: read its SKILL.md at <location> with `read_file`, then follow it.",
+        "- If multiple skills could apply: choose the most specific one, then read and follow it.",
+        "- If no skill clearly applies: do not read any SKILL.md.",
+        "- Read at most one skill up front; only fall back to generic tools if that skill is insufficient or fails.",
         "",
-        "Available skills:",
+        _format_skills_for_prompt(skills),
     ]
-    for skill in skills:
-        lines.append(f"- {skill['name']}: {skill['description']} ({skill['path']})")
     lines.extend(
         [
             "",
             "Execution rules:",
             "- Prefer completing the task over only describing how it could be done.",
-            "- When a task matches a skill, inspect its SKILL.md with shell tools such as cat, sed, or rg, then execute the required tools.",
+            "- If a user request can be handled by a relevant skill, prefer that skill over generic tools.",
+            "- Do not use web_search first when an existing skill already covers the task.",
             "- Never read skill scripts unless you need to modify them.",
-            "- If a task is clearly programmable but not easy to complete directly, check whether the programmer skill applies before saying the task cannot be done.",
         ]
     )
     return "\n".join(lines)
