@@ -8,8 +8,14 @@ from dotenv import load_dotenv
 from litellm import completion
 from prompt_toolkit import PromptSession
 from tools import TOOLS, TOOL_HANDLERS
+from tools.compact import estimate_tokens, summarize
 
 load_dotenv()
+
+MICRO_COMPACT_KEEP_RECENT = 3
+MICRO_COMPACT_MIN_CHARS = 200
+PRESERVE_RESULT_TOOLS = {"read_file"}
+AUTO_COMPACT_THRESHOLD = 50000
 
 
 def now() -> str:
@@ -45,6 +51,23 @@ def save_session(session: dict, history: list[dict], path: Path) -> None:
         json.dumps({**session, "history": history}, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+
+
+def micro_compact(messages: list[dict]) -> None:
+    tool_messages = [message for message in messages if message.get("role") == "tool"]
+    if len(tool_messages) <= MICRO_COMPACT_KEEP_RECENT:
+        return
+
+    for message in tool_messages[:-MICRO_COMPACT_KEEP_RECENT]:
+        content = message.get("content")
+        if len(content) < MICRO_COMPACT_MIN_CHARS:
+            continue
+    
+        tool_name = message.get("name") or message.get("tool_name") or "tool"
+
+        if tool_name in PRESERVE_RESULT_TOOLS:
+            continue
+        message["content"] = f"[Previous tool output omitted: {tool_name}]"
 
 
 def stream_assistant_message(messages: list[dict]) -> tuple[dict, str | None]:
@@ -99,6 +122,13 @@ def stream_assistant_message(messages: list[dict]) -> tuple[dict, str | None]:
 
 def agent_loop(messages: list[dict]) -> str:
     while True:
+        micro_compact(messages)
+
+        if estimate_tokens(messages) > AUTO_COMPACT_THRESHOLD:
+            print("[auto_compact triggered]")
+            messages[:] = summarize(messages)
+            save_session(session_meta, messages, session_path)
+
         assistant_message, finish_reason = stream_assistant_message(messages)
         messages.append(assistant_message)
         save_session(session_meta, messages, session_path)
@@ -106,11 +136,19 @@ def agent_loop(messages: list[dict]) -> str:
         if finish_reason != "tool_calls":
             return assistant_message["content"]
 
+        manual_compact = False
+        compact_focus = None
         for tool_call in assistant_message["tool_calls"]:
             tool_name = tool_call["function"]["name"]
-            handler = TOOL_HANDLERS.get(tool_name)
             args = json.loads(tool_call["function"]["arguments"] or "{}")
-            output = handler(**args) if handler else f"Unknown tool: {tool_name}"
+
+            if tool_name == "compact":
+                manual_compact = True
+                compact_focus = args.get("focus")
+                output = "Compressing conversation..."
+            else:
+                handler = TOOL_HANDLERS.get(tool_name)
+                output = handler(**args) if handler else f"Unknown tool: {tool_name}"
 
             print(f"> {tool_name}:")
             print(output[:200])
@@ -119,9 +157,15 @@ def agent_loop(messages: list[dict]) -> str:
                 {
                     "role": "tool",
                     "tool_call_id": tool_call["id"],
-                    "content": output
+                    "name": tool_name,
+                    "content": output,
                 }
             )
+            save_session(session_meta, messages, session_path)
+
+        if manual_compact:
+            print("[manual compact]")
+            messages[:] = summarize(messages, compact_focus)
             save_session(session_meta, messages, session_path)
 
 

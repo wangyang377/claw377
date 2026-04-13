@@ -1,6 +1,6 @@
-from . import bash, edit_file, read_file, task, web_fetch, web_search, write_file
+from . import bash, compact, edit_file, read_file, task, web_fetch, web_search, write_file
 
-_MODULES = [bash, read_file, write_file, edit_file, task, web_fetch, web_search]
+_MODULES = [bash, read_file, write_file, edit_file, task, web_fetch, web_search, compact]
 
 
 def _tool_name(module) -> str:
