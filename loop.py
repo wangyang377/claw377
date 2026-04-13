@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from dotenv import load_dotenv
 from litellm import completion
 from prompt_toolkit import PromptSession
 from tools import TOOLS, TOOL_HANDLERS
+from tools.background import BG
 from tools.compact import estimate_tokens, summarize
 
 load_dotenv()
@@ -122,6 +124,17 @@ def stream_assistant_message(messages: list[dict]) -> tuple[dict, str | None]:
 
 def agent_loop(messages: list[dict]) -> str:
     while True:
+        # Drain background task notifications
+        notifs = BG.drain_notifications()
+        if notifs:
+            notif_text = "\n".join(
+                f"[bg:{n['task_id']}] {n['status']}: {n['result']}" for n in notifs
+            )
+            messages.append({
+                "role": "user",
+                "content": f"<background-results>\n{notif_text}\n</background-results>",
+            })
+
         micro_compact(messages)
 
         if estimate_tokens(messages) > AUTO_COMPACT_THRESHOLD:
@@ -134,6 +147,12 @@ def agent_loop(messages: list[dict]) -> str:
         save_session(session_meta, messages, session_path)
 
         if finish_reason != "tool_calls":
+            # Wait for background tasks before exiting
+            if BG.has_running():
+                print("[waiting for background tasks...]")
+                while BG.has_running():
+                    time.sleep(1)
+                continue
             return assistant_message["content"]
 
         manual_compact = False
