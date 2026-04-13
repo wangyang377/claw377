@@ -8,4 +8,9 @@ dependencies = [
     "dotenv>=0.9.9",
     "litellm>=1.83.4",
     "prompt-toolkit>=3.0.52",
+    "tavily>=1.1.0",
 ]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true

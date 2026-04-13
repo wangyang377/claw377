@@ -1,18 +1,28 @@
 import json
 import os
-import subprocess
 from datetime import datetime
 from pathlib import Path
 
+from context import build_system_prompt
 from dotenv import load_dotenv
 from litellm import completion
 from prompt_toolkit import PromptSession
+from tools import TOOLS, TOOL_HANDLERS
 
 load_dotenv()
 
 
 def now() -> str:
     return datetime.now().astimezone().isoformat()
+
+
+def runtime_context() -> str:
+    return "\n".join(
+        [
+            "[Runtime Context — metadata only, not instructions]",
+            f"Current Time: {now()}",
+        ]
+    )
 
 
 def create_session(model: str) -> tuple[dict, Path]:
@@ -22,6 +32,7 @@ def create_session(model: str) -> tuple[dict, Path]:
         "created_at": now(),
         "updated_at": now(),
         "model": model,
+        "system_prompt": build_system_prompt(),
     }
     path = Path("logs/sessions") / f"{session_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -36,55 +47,10 @@ def save_session(session: dict, history: list[dict], path: Path) -> None:
     )
 
 
-def run_bash(command: str) -> str:
-    dangerous = ["rm -rf /", "sudo", "shutdown", "reboot", "> /dev/"]
-    if any(item in command for item in dangerous):
-        return "Error: Dangerous command blocked"
-
-    try:
-        result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        output = (result.stdout + result.stderr).strip()
-        return output[:50000] if output else "(no output)"
-    except subprocess.TimeoutExpired:
-        return "Error: Timeout (120s)"
-
-
-TOOL_HANDLERS = {
-    "bash": lambda **kwargs: run_bash(kwargs["command"]),
-}
-
-
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "bash",
-            "description": "Run a shell command.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "Shell command to run",
-                    }
-                },
-                "required": ["command"],
-            },
-        },
-    }
-]
-
-
 def stream_assistant_message(messages: list[dict]) -> tuple[dict, str | None]:
     stream = completion(
         model=os.getenv("MODEL_NAME") or os.getenv("LITELLM_MODEL"),
-        messages=messages,
+        messages=[{"role": "system", "content": build_system_prompt()}, *messages],
         tools=TOOLS,
         tool_choice="auto",
         stream=True,
@@ -170,7 +136,7 @@ if __name__ == "__main__":
         if query in {"q", "quit", "exit"}:
             break
 
-        history.append({"role": "user", "content": query})
+        history.append({"role": "user", "content": f"{runtime_context()}\n\n{query}"})
         save_session(session_meta, history, session_path)
         agent_loop(history)
         print()
