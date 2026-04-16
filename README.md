@@ -79,7 +79,8 @@ claw377/
 │   ├── read_file.py     # 读取文件
 │   ├── write_file.py    # 写文件
 │   ├── edit_file.py     # 基于 old_text/new_text 做替换
-│   ├── task.py          # 启动 fresh-context 子代理
+│   ├── subagent.py      # 暴露 subagent 工具，启动 fresh-context 子代理
+│   ├── task_system.py   # 持久化任务系统，状态保存在 .tasks/
 │   ├── web_fetch.py     # 抓取网页正文
 │   ├── web_search.py    # 使用 Tavily 搜索
 │   ├── compact.py       # 对话压缩与 transcript 保存
@@ -217,16 +218,32 @@ compact.summarize(messages)
 
 这部分体现的是“配置驱动的 agent 行为注入”。
 
-### `tools/task.py`
+### `tools/subagent.py`
 
 这个工具比较有代表性，因为它实现了“子代理”能力：
 
 - 为子任务创建 fresh context
 - 共享当前工作目录
-- 复用现有工具，但避免递归调用 `task`
+- 复用现有工具，但避免递归调用 `subagent`
 - 在限定迭代次数内独立完成任务
 
-因此主代理可以把某个问题拆出去，让一个轻量子代理先做探索或局部执行。
+对外暴露的工具名是 `subagent`，因此主代理可以把某个问题拆出去，让一个轻量子代理先做探索或局部执行。
+
+### `tools/task_system.py`
+
+这个模块实现了持久化任务系统：
+
+- `task_create`：创建任务，保存到 `.tasks/task_<id>.json`
+- `task_update`：更新状态、owner 或依赖关系
+- `task_list`：列出所有任务摘要
+- `task_get`：查看单个任务详情
+
+它和 `tools/subagent.py` 不同：
+
+- `subagent.py` 暴露的是 `subagent` 工具，用来把工作委派给 fresh-context 子代理
+- `task_system.py` 是“把任务状态持久化到文件系统”
+
+这样即使对话被压缩，任务状态也仍然保留在工作区里。
 
 ### `tools/background.py`
 

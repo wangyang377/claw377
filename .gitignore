@@ -14,3 +14,7 @@ logs/
 
 .clawhub
 _meta.json
+
+.idea
+.tasks/
+docs/

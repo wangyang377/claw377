@@ -11,7 +11,7 @@ MAX_SUBAGENT_ITERATIONS = 30
 TOOL_SCHEMA = {
     "type": "function",
     "function": {
-        "name": "task",
+        "name": "subagent",
         "description": (
             "Spawn a subagent with fresh context. It shares the filesystem "
             "but not conversation history."
@@ -35,17 +35,17 @@ TOOL_SCHEMA = {
 
 
 def run(*, prompt: str, description: str = "subtask") -> str:
-    print(f"> task ({description}):")
+    print(f"> subagent ({description}):")
     print(prompt[:200])
 
     from . import TOOLS, TOOL_HANDLERS
 
-    task_name = TOOL_SCHEMA["function"]["name"]
-    tools = [tool for tool in TOOLS if tool["function"]["name"] != task_name]
+    tool_name = TOOL_SCHEMA["function"]["name"]
+    tools = [tool for tool in TOOLS if tool["function"]["name"] != tool_name]
     handlers = {
         name: handler
         for name, handler in TOOL_HANDLERS.items()
-        if name != task_name
+        if name != tool_name
     }
     messages = [
         {
