@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from ..app_paths import current_workspace
+
 
 TOOL_SCHEMA = {
     "type": "function",
@@ -24,7 +26,7 @@ def run(*, path: str) -> str:
     try:
         file_path = Path(path).expanduser()
         if not file_path.is_absolute():
-            file_path = Path.cwd() / file_path
+            file_path = current_workspace() / file_path
         if not file_path.exists():
             return f"Error: File not found: {path}"
         if not file_path.is_file():

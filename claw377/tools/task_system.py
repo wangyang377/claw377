@@ -2,15 +2,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-
-WORKDIR = Path.cwd()
-TASKS_DIR = WORKDIR / ".tasks"
+from ..app_paths import tasks_dir
 
 
 class TaskManager:
     def __init__(self, tasks_dir: Path):
         self.dir = tasks_dir
-        self.dir.mkdir(exist_ok=True)
+        self.dir.mkdir(parents=True, exist_ok=True)
         self._next_id = self._max_id() + 1
 
     def _max_id(self) -> int:
@@ -102,7 +100,8 @@ class TaskManager:
         return "\n".join(lines)
 
 
-TASKS = TaskManager(TASKS_DIR)
+def _tasks() -> TaskManager:
+    return TaskManager(tasks_dir())
 
 
 TOOL_SCHEMAS = [
@@ -110,7 +109,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "task_create",
-            "description": "Create a persistent task stored in .tasks/.",
+            "description": "Create a persistent task stored in the workspace task state.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -181,18 +180,18 @@ TOOL_SCHEMAS = [
 
 
 TOOL_HANDLERS = {
-    "task_create": lambda **kw: TASKS.create(
+    "task_create": lambda **kw: _tasks().create(
         kw["subject"],
         kw.get("description", ""),
         kw.get("owner", ""),
     ),
-    "task_update": lambda **kw: TASKS.update(
+    "task_update": lambda **kw: _tasks().update(
         kw["task_id"],
         kw.get("status"),
         kw.get("addBlockedBy"),
         kw.get("removeBlockedBy"),
         kw.get("owner"),
     ),
-    "task_list": lambda **kw: TASKS.list_all(),
-    "task_get": lambda **kw: TASKS.get(kw["task_id"]),
+    "task_list": lambda **kw: _tasks().list_all(),
+    "task_get": lambda **kw: _tasks().get(kw["task_id"]),
 }

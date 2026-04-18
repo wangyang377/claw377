@@ -1,4 +1,4 @@
-from claw377.loop import main
+from .loop import main
 
 
 if __name__ == "__main__":

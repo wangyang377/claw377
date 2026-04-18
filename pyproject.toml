@@ -1,7 +1,7 @@
 [project]
 name = "claw377"
 version = "0.1.0"
-description = "Add your description here"
+description = "A lightweight terminal coding agent playground."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
@@ -9,6 +9,35 @@ dependencies = [
     "litellm>=1.83.4",
     "prompt-toolkit>=3.0.52",
     "tavily>=1.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.2.2",
+    "pytest>=8.3.5",
+]
+
+[project.scripts]
+claw = "claw377.loop:main"
+claw377 = "claw377.loop:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["claw377", "claw377.*"]
+
+[tool.setuptools.package-data]
+claw377 = ["templates/*.md", "templates/memory/*.md", "skills/*/SKILL.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+addopts = [
+    "--ignore=test/litellm_test.py",
+    "--ignore=test/stream_tool_call.py",
+    "--ignore=test/tavily_test.py",
+    "--ignore=test/toolkit_test.py",
 ]
 
 [[tool.uv.index]]

@@ -1,11 +1,9 @@
 import json
 import os
-from pathlib import Path
 
 from litellm import completion
 
-
-WORKDIR = Path.cwd()
+from ..app_paths import current_workspace
 MAX_SUBAGENT_ITERATIONS = 30
 
 TOOL_SCHEMA = {
@@ -51,7 +49,7 @@ def run(*, prompt: str, description: str = "subtask") -> str:
         {
             "role": "system",
             "content": (
-                f"You are a coding subagent at {WORKDIR}. "
+                f"You are a coding subagent at {current_workspace()}. "
                 "You have fresh context and do not know the parent conversation. "
                 "Use tools as needed, then return a concise summary."
             ),

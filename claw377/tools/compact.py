@@ -7,7 +7,7 @@ from pathlib import Path
 
 from litellm import completion
 
-TRANSCRIPT_DIR = Path("logs/transcripts")
+from ..app_paths import transcripts_dir
 
 TOOL_SCHEMA = {
     "type": "function",
@@ -35,8 +35,9 @@ def estimate_tokens(messages: list[dict]) -> int:
 
 
 def _save_transcript(messages: list[dict]) -> Path:
-    TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
-    path = TRANSCRIPT_DIR / f"transcript_{int(time.time())}.jsonl"
+    transcript_dir = transcripts_dir()
+    transcript_dir.mkdir(parents=True, exist_ok=True)
+    path = transcript_dir / f"transcript_{int(time.time())}.jsonl"
     with path.open("w", encoding="utf-8") as f:
         for msg in messages:
             f.write(json.dumps(msg, ensure_ascii=False, default=str) + "\n")

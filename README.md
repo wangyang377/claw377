@@ -15,29 +15,47 @@
 - 基于 `LiteLLM` 的流式输出和函数调用
 - 工具模块化设计，统一放在 `tools/`
 - 动态系统提示词拼装，支持 bootstrap、memory、skills 注入
-- 会话日志持久化到 `logs/sessions/`
+- 会话日志持久化到 `~/.claw377/sessions/`
 - 长上下文自动压缩，并保留 transcript
 - 支持后台命令执行和简单子代理委派
 
 ## 快速开始
 
-### 1. 安装依赖
+### 1. 安装
 
-建议使用 `uv`：
+开发环境：
 
 ```bash
 uv sync
 ```
 
-### 2. 配置环境变量
-
-复制环境变量模板并填写：
+安装成命令行工具：
 
 ```bash
-cp .env.example .env
+uv tool install .
 ```
 
-最少需要配置：
+或者：
+
+```bash
+pipx install .
+```
+
+安装后可直接运行：
+
+```bash
+claw
+```
+
+### 2. 配置环境变量
+
+程序第一次启动会自动创建全局配置文件：
+
+`~/.claw377/config.env`
+
+你也可以在当前工作目录放一个本地 `.env` 覆盖全局配置。
+
+最少需要配置一个模型名和对应 provider key，例如：
 
 ```env
 XAI_API_KEY=your_api_key
@@ -53,12 +71,25 @@ TAVILY_API_KEY=your_tavily_api_key
 说明：
 
 - `MODEL_NAME` 会传给 `litellm.completion(...)`
-- 当前仓库里 `.env.example` 只放了最小字段，搜索能力依赖的 `TAVILY_API_KEY` 需要你自己补上
+- 当前工作目录里的 `.env` 优先级高于 `~/.claw377/config.env`
+- 搜索能力依赖 `TAVILY_API_KEY`
 
 ### 3. 启动
 
 ```bash
-uv run python loop.py
+claw
+```
+
+单次执行模式：
+
+```bash
+claw "帮我总结一下这个仓库"
+```
+
+查看数据目录：
+
+```bash
+claw --print-paths
 ```
 
 退出命令：
@@ -71,23 +102,25 @@ uv run python loop.py
 
 ```text
 claw377/
-├── loop.py              # 主交互循环，负责流式输出、工具调用、会话保存、自动压缩
-├── context.py           # 构建 system prompt，拼装 bootstrap/memory/skills/日期信息
-├── tools/               # 所有工具定义与执行逻辑
-│   ├── __init__.py      # 汇总 TOOL_SCHEMA 和 TOOL_HANDLERS
-│   ├── bash.py          # 执行 shell 命令
-│   ├── read_file.py     # 读取文件
-│   ├── write_file.py    # 写文件
-│   ├── edit_file.py     # 基于 old_text/new_text 做替换
-│   ├── subagent.py      # 暴露 subagent 工具，启动 fresh-context 子代理
-│   ├── task_system.py   # 持久化任务系统，状态保存在 .tasks/
-│   ├── web_fetch.py     # 抓取网页正文
-│   ├── web_search.py    # 使用 Tavily 搜索
-│   ├── compact.py       # 对话压缩与 transcript 保存
-│   └── background.py    # 后台任务执行与状态轮询
-├── bootstrap/           # 预置行为约束与偏好
-├── memory/              # 项目长期记忆
-├── logs/                # 会话日志与 transcript 输出目录
+├── claw377/             # Python package
+│   ├── loop.py          # 主交互循环，负责流式输出、工具调用、会话保存、自动压缩
+│   ├── context.py       # 构建 system prompt，拼装 templates/skills/日期信息
+│   ├── app_paths.py     # 用户数据目录与配置加载
+│   ├── templates/       # 打包进 wheel 的提示词模板
+│   ├── skills/          # 打包进 wheel 的内置 skills
+│   └── tools/           # 所有工具定义与执行逻辑
+│       ├── __init__.py  # 汇总 TOOL_SCHEMA 和 TOOL_HANDLERS
+│       ├── bash.py      # 执行 shell 命令
+│       ├── read_file.py # 读取文件
+│       ├── write_file.py# 写文件
+│       ├── edit_file.py # 基于 old_text/new_text 做替换
+│       ├── subagent.py  # 暴露 subagent 工具，启动 fresh-context 子代理
+│       ├── task_system.py # 工作区级任务系统，状态保存在 ~/.claw377/workspaces/<id>/tasks/
+│       ├── web_fetch.py # 抓取网页正文
+│       ├── web_search.py# 使用 Tavily 搜索
+│       ├── compact.py   # 对话压缩与 transcript 保存
+│       └── background.py# 后台任务执行与状态轮询
+├── loop.py              # 兼容入口，转发到 claw377.loop:main
 └── test/                # 一些工具/模型调用实验
 ```
 
@@ -97,7 +130,7 @@ claw377/
 
 ### 1. 交互层
 
-`loop.py` 使用 `prompt_toolkit` 提供 REPL 体验：
+`claw377/loop.py` 使用 `prompt_toolkit` 提供 REPL 体验：
 
 - 用户在终端输入问题
 - 程序把当前时间等运行时上下文附加到用户消息
@@ -107,13 +140,13 @@ claw377/
 
 ### 2. Prompt 组装层
 
-`context.py` 负责构造 system prompt，来源包括：
+`claw377/context.py` 负责构造 system prompt，来源包括：
 
 - 项目身份与运行环境信息
-- `bootstrap/AGENTS.md`、`SOUL.md`、`USER.md`、`TOOLS.md`
-- `memory/MEMORY.md`
+- `claw377/templates/AGENTS.md`、`SOUL.md`、`USER.md`、`TOOLS.md`
+- `claw377/templates/memory/MEMORY.md`
 - 当前日期、时区规则
-- 本地 `skills/*/SKILL.md` 的元数据
+- `claw377/skills/*/SKILL.md` 的元数据
 
 也就是说，这个项目不是把系统提示词硬编码成一大段字符串，而是拆成多个来源动态拼接。这样做的好处是：
 
@@ -123,7 +156,7 @@ claw377/
 
 ### 3. Agent 运行层
 
-`loop.py` 中的核心逻辑是 `agent_loop()` 和 `stream_assistant_message()`。
+`claw377/loop.py` 中的核心逻辑是 `agent_loop()` 和 `stream_assistant_message()`。
 
 它们一起完成以下事情：
 
@@ -138,7 +171,7 @@ claw377/
 
 ### 4. 工具执行层
 
-`tools/__init__.py` 做了两件事：
+`claw377/tools/__init__.py` 做了两件事：
 
 - 暴露给模型的工具 schema 列表 `TOOLS`
 - 工具名到 Python 函数的映射 `TOOL_HANDLERS`
@@ -174,7 +207,7 @@ LiteLLM 流式生成 assistant 文本 / tool_calls
    ↓
 直到 finish_reason != tool_calls
    ↓
-保存 session 到 logs/sessions/
+保存 session 到 ~/.claw377/sessions/
 ```
 
 如果中途上下文过长，还会插入一条支线流程：
@@ -186,7 +219,7 @@ estimate_tokens(messages)
    ↓
 compact.summarize(messages)
    ↓
-保存 transcript 到 logs/transcripts/
+保存 transcript 到 ~/.claw377/transcripts/
    ↓
 用摘要替换历史消息，继续运行
 ```
@@ -211,7 +244,7 @@ compact.summarize(messages)
 负责 system prompt 的分层拼接，而不是直接 hardcode：
 
 - `_identity_section()`：身份、操作系统、Python 版本
-- `_bootstrap_section()`：读取 `bootstrap/` 里的规则
+- `_bootstrap_section()`：读取 `claw377/templates/` 里的规则
 - `_memory_section()`：读取长期记忆
 - `_list_skills()`：扫描本地 skills 元数据
 - `build_system_prompt()`：最终合成提示词
@@ -233,7 +266,7 @@ compact.summarize(messages)
 
 这个模块实现了持久化任务系统：
 
-- `task_create`：创建任务，保存到 `.tasks/task_<id>.json`
+- `task_create`：创建任务，保存到 `~/.claw377/workspaces/<id>/tasks/task_<id>.json`
 - `task_update`：更新状态、owner 或依赖关系
 - `task_list`：列出所有任务摘要
 - `task_get`：查看单个任务详情
@@ -259,7 +292,7 @@ compact.summarize(messages)
 
 压缩模块负责解决上下文窗口膨胀问题：
 
-- 先把完整消息保存到 `logs/transcripts/*.jsonl`
+- 先把完整消息保存到 `~/.claw377/transcripts/*.jsonl`
 - 再调用模型生成摘要
 - 用一条“压缩后的摘要消息”替换原始长历史
 

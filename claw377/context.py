@@ -5,8 +5,9 @@ import re
 from typing import Optional, Tuple
 
 
-WORKSPACE = Path(__file__).resolve().parent
-BOOTSTRAP_DIR = WORKSPACE / "bootstrap"
+PACKAGE_ROOT = Path(__file__).resolve().parent
+WORKSPACE = PACKAGE_ROOT.parent.resolve()
+TEMPLATES_DIR = PACKAGE_ROOT / "templates"
 BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
 
 
@@ -84,7 +85,7 @@ def _identity_section() -> str:
 def _bootstrap_section() -> str:
     parts = []
     for name in BOOTSTRAP_FILES:
-        content = _strip_title(_read_text(BOOTSTRAP_DIR / name))
+        content = _strip_title(_read_text(TEMPLATES_DIR / name))
         if content:
             parts.append(f"## {name}\n{content}")
     if parts:
@@ -93,7 +94,7 @@ def _bootstrap_section() -> str:
 
 
 def _memory_section() -> str:
-    content = _strip_title(_read_text(WORKSPACE / "memory" / "MEMORY.md"))
+    content = _strip_title(_read_text(TEMPLATES_DIR / "memory" / "MEMORY.md"))
     if content:
         return f"# Memory\n\n{content}"
     return ""
@@ -132,7 +133,7 @@ def _format_skills_for_prompt(skills: list[dict[str, str]]) -> str:
 
 
 def _list_skills() -> list[dict[str, str]]:
-    skills_root = WORKSPACE / "skills"
+    skills_root = PACKAGE_ROOT / "skills"
     if not skills_root.exists():
         return []
 

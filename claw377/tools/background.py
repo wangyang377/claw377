@@ -3,9 +3,8 @@
 import subprocess
 import threading
 import uuid
-from pathlib import Path
 
-WORKDIR = Path.cwd()
+from ..app_paths import current_workspace
 
 
 class BackgroundManager:
@@ -24,7 +23,9 @@ class BackgroundManager:
     def _execute(self, task_id: str, command: str) -> None:
         try:
             r = subprocess.run(
-                command, shell=True, cwd=WORKDIR,
+                command,
+                shell=True,
+                cwd=current_workspace(),
                 capture_output=True, text=True, timeout=300,
             )
             output = (r.stdout + r.stderr).strip()[:50000]
