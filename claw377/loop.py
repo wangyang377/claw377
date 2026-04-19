@@ -19,10 +19,12 @@ from .app_paths import (
     load_environment,
     sessions_dir,
 )
-from .context import build_system_prompt
+from .consolidator import Consolidator
+from .context import build_system_prompt, default_memory_text
+from .memory_store import MemoryStore
+from .session import Session
 from .tools import TOOLS, TOOL_HANDLERS
 from .tools.background import BG
-from .tools.compact import estimate_tokens, summarize
 
 MICRO_COMPACT_KEEP_RECENT = 3
 MICRO_COMPACT_MIN_CHARS = 200
@@ -31,6 +33,8 @@ AUTO_COMPACT_THRESHOLD = 50000
 VERSION = "0.1.0"
 session_meta: dict | None = None
 session_path: Path | None = None
+memory_store: MemoryStore | None = None
+consolidator: Consolidator | None = None
 
 
 def now() -> str:
@@ -54,19 +58,61 @@ def create_session(model: str) -> tuple[dict, Path]:
         "updated_at": now(),
         "model": model,
         "workspace": str(current_workspace()),
-        "system_prompt": build_system_prompt(),
     }
     path = sessions_dir() / f"{session_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     return session, path
 
 
-def save_session(session: dict, history: list[dict], path: Path) -> None:
+def session_path_for(session_id: str) -> Path:
+    return sessions_dir() / f"{session_id}.json"
+
+
+def current_system_prompt(recent_archive_summary: str = "") -> str:
+    if memory_store is None:
+        raise RuntimeError("Memory store is not initialized")
+    return build_system_prompt(
+        memory_text=memory_store.read_memory(),
+        recent_archive_summary=recent_archive_summary,
+    )
+
+
+def save_session(session: dict, runtime_session: Session, path: Path) -> None:
     session["updated_at"] = now()
     path.write_text(
-        json.dumps({**session, "history": history}, indent=2, ensure_ascii=False),
+        json.dumps(
+            {
+                **session,
+                "system_prompt": current_system_prompt(
+                    runtime_session.recent_archive_summary
+                ),
+                "last_consolidated": runtime_session.last_consolidated,
+                "recent_archive_summary": runtime_session.recent_archive_summary,
+                "history": runtime_session.messages,
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
+
+
+def load_session(session_id: str) -> tuple[dict, Session, Path]:
+    path = session_path_for(session_id)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    runtime_session = Session(
+        messages=payload.get("history", []),
+        last_consolidated=payload.get("last_consolidated", 0),
+        recent_archive_summary=payload.get("recent_archive_summary", ""),
+    )
+    session = {
+        "session_id": payload["session_id"],
+        "created_at": payload.get("created_at", now()),
+        "updated_at": payload.get("updated_at", now()),
+        "model": payload.get("model", "unknown-model"),
+        "workspace": payload.get("workspace", str(current_workspace())),
+    }
+    return session, runtime_session, path
 
 
 def micro_compact(messages: list[dict]) -> None:
@@ -86,10 +132,39 @@ def micro_compact(messages: list[dict]) -> None:
         message["content"] = f"[Previous tool output omitted: {tool_name}]"
 
 
-def stream_assistant_message(messages: list[dict]) -> tuple[dict, str | None]:
+def build_prompt_messages(
+    messages: list[dict],
+    *,
+    recent_archive_summary: str = "",
+    current_message: str | None = None,
+) -> list[dict]:
+    if memory_store is None:
+        raise RuntimeError("Memory store is not initialized")
+    prompt_messages = list(messages)
+    if current_message:
+        prompt_messages.append(
+            {"role": "user", "content": f"{runtime_context()}\n\n{current_message}"}
+        )
+    return [
+        {
+            "role": "system",
+            "content": current_system_prompt(recent_archive_summary),
+        },
+        *prompt_messages,
+    ]
+
+
+def stream_assistant_message(
+    messages: list[dict],
+    *,
+    recent_archive_summary: str = "",
+) -> tuple[dict, str | None]:
     stream = completion(
         model=os.getenv("MODEL_NAME") or os.getenv("LITELLM_MODEL"),
-        messages=[{"role": "system", "content": build_system_prompt()}, *messages],
+        messages=build_prompt_messages(
+            messages,
+            recent_archive_summary=recent_archive_summary,
+        ),
         tools=TOOLS,
         tool_choice="auto",
         stream=True,
@@ -136,8 +211,8 @@ def stream_assistant_message(messages: list[dict]) -> tuple[dict, str | None]:
     return message, finish_reason
 
 
-def agent_loop(messages: list[dict]) -> str:
-    if session_meta is None or session_path is None:
+def agent_loop(runtime_session: Session) -> str:
+    if session_meta is None or session_path is None or consolidator is None:
         raise RuntimeError("Session is not initialized")
     while True:
         # Drain background task notifications
@@ -146,21 +221,27 @@ def agent_loop(messages: list[dict]) -> str:
             notif_text = "\n".join(
                 f"[bg:{n['task_id']}] {n['status']}: {n['result']}" for n in notifs
             )
-            messages.append({
-                "role": "user",
-                "content": f"<background-results>\n{notif_text}\n</background-results>",
-            })
+            runtime_session.add(
+                {
+                    "role": "user",
+                    "content": f"<background-results>\n{notif_text}\n</background-results>",
+                }
+            )
 
-        micro_compact(messages)
+        micro_compact(runtime_session.active_messages())
+        if consolidator.maybe_consolidate(
+            runtime_session,
+            build_prompt_messages=build_prompt_messages,
+        ):
+            print("[consolidated old messages]")
+            save_session(session_meta, runtime_session, session_path)
 
-        if estimate_tokens(messages) > AUTO_COMPACT_THRESHOLD:
-            print("[auto_compact triggered]")
-            messages[:] = summarize(messages)
-            save_session(session_meta, messages, session_path)
-
-        assistant_message, finish_reason = stream_assistant_message(messages)
-        messages.append(assistant_message)
-        save_session(session_meta, messages, session_path)
+        assistant_message, finish_reason = stream_assistant_message(
+            runtime_session.active_messages(),
+            recent_archive_summary=runtime_session.recent_archive_summary,
+        )
+        runtime_session.add(assistant_message)
+        save_session(session_meta, runtime_session, session_path)
 
         if finish_reason != "tool_calls":
             # Wait for background tasks before exiting
@@ -180,7 +261,7 @@ def agent_loop(messages: list[dict]) -> str:
             if tool_name == "compact":
                 manual_compact = True
                 compact_focus = args.get("focus")
-                output = "Compressing conversation..."
+                output = "Consolidating old conversation context..."
             else:
                 handler = TOOL_HANDLERS.get(tool_name)
                 output = handler(**args) if handler else f"Unknown tool: {tool_name}"
@@ -188,7 +269,7 @@ def agent_loop(messages: list[dict]) -> str:
             print(f"> {tool_name}:")
             print(output[:200])
 
-            messages.append(
+            runtime_session.add(
                 {
                     "role": "tool",
                     "tool_call_id": tool_call["id"],
@@ -196,12 +277,19 @@ def agent_loop(messages: list[dict]) -> str:
                     "content": output,
                 }
             )
-            save_session(session_meta, messages, session_path)
+            save_session(session_meta, runtime_session, session_path)
 
         if manual_compact:
-            print("[manual compact]")
-            messages[:] = summarize(messages, compact_focus)
-            save_session(session_meta, messages, session_path)
+            print("[manual consolidate]")
+            if consolidator.maybe_consolidate(
+                runtime_session,
+                build_prompt_messages=build_prompt_messages,
+            ):
+                if compact_focus:
+                    runtime_session.recent_archive_summary = (
+                        f"{runtime_session.recent_archive_summary}\n\nFocus: {compact_focus}".strip()
+                    )
+                save_session(session_meta, runtime_session, session_path)
 
 
 def _print_startup_help(missing: list[str]) -> None:
@@ -216,6 +304,34 @@ def _print_startup_help(missing: list[str]) -> None:
     print("Fill in the config file above, or create a local .env in your workspace.", file=sys.stderr)
 
 
+def _resume_session(session_id: str) -> tuple[dict, Session, Path] | None:
+    try:
+        return load_session(session_id)
+    except FileNotFoundError:
+        print(f"Session not found: {session_id}")
+    except json.JSONDecodeError:
+        print(f"Session is not readable: {session_id}")
+    return None
+
+
+def _handle_frontend_command(command: str) -> tuple[str, tuple[dict, Session, Path] | None]:
+    if not command.startswith("/"):
+        return "continue", None
+
+    parts = command.split(maxsplit=1)
+    name = parts[0]
+    arg = parts[1].strip() if len(parts) > 1 else ""
+
+    if name == "/resume":
+        if not arg:
+            print("Usage: /resume <session_id>")
+            return "handled", None
+        return "resume", _resume_session(arg)
+
+    print(f"Unknown command: {name}")
+    return "handled", None
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="claw377 terminal agent")
     parser.add_argument("prompt", nargs="?", help="Run one prompt and exit.")
@@ -228,10 +344,11 @@ def _print_paths() -> None:
     print(f"app_home={app_home()}")
     print(f"config={config_env_path()}")
     print(f"sessions={sessions_dir()}")
-    from .app_paths import tasks_dir, transcripts_dir
+    from .app_paths import memory_dir, tasks_dir, transcripts_dir
 
     print(f"transcripts={transcripts_dir()}")
     print(f"workspace_tasks={tasks_dir()}")
+    print(f"workspace_memory={memory_dir()}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -252,14 +369,17 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     model = os.getenv("MODEL_NAME") or os.getenv("LITELLM_MODEL") or "unknown-model"
-    global session_meta, session_path
+    global session_meta, session_path, memory_store, consolidator
     session_meta, session_path = create_session(model)
-    history: list[dict] = []
+    runtime_session = Session()
+    memory_store = MemoryStore()
+    memory_store.ensure_memory_file(default_memory_text())
+    consolidator = Consolidator(memory_store, AUTO_COMPACT_THRESHOLD)
 
     if args.prompt:
-        history.append({"role": "user", "content": f"{runtime_context()}\n\n{args.prompt}"})
-        save_session(session_meta, history, session_path)
-        agent_loop(history)
+        runtime_session.add({"role": "user", "content": f"{runtime_context()}\n\n{args.prompt}"})
+        save_session(session_meta, runtime_session, session_path)
+        agent_loop(runtime_session)
         print()
         return 0
 
@@ -270,7 +390,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"claw377 [{model}]")
     print(f"workspace: {current_workspace()}")
     print(f"session log: {session_path}")
-    print("Type 'exit' to quit.")
+    print("Type 'exit' to quit. Use /resume <session_id> to restore a saved session.")
 
     session = PromptSession()
     while True:
@@ -279,10 +399,20 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if query in {"q", "quit", "exit"}:
             break
+        action, payload = _handle_frontend_command(query)
+        if action == "handled":
+            continue
+        if action == "resume":
+            if payload is None:
+                continue
+            session_meta, runtime_session, session_path = payload
+            print(f"[resumed {session_meta['session_id']}]")
+            print(f"session log: {session_path}")
+            continue
 
-        history.append({"role": "user", "content": f"{runtime_context()}\n\n{query}"})
-        save_session(session_meta, history, session_path)
-        agent_loop(history)
+        runtime_session.add({"role": "user", "content": f"{runtime_context()}\n\n{query}"})
+        save_session(session_meta, runtime_session, session_path)
+        agent_loop(runtime_session)
         print()
     return 0
 

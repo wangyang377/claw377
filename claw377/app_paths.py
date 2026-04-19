@@ -43,6 +43,14 @@ def tasks_dir(workspace: Path | None = None) -> Path:
     return workspace_state_dir(workspace) / "tasks"
 
 
+def memory_dir(workspace: Path | None = None) -> Path:
+    return workspace_state_dir(workspace) / "memory"
+
+
+def memory_file(workspace: Path | None = None) -> Path:
+    return memory_dir(workspace) / "MEMORY.md"
+
+
 def ensure_app_layout() -> None:
     for path in (
         app_home(),
@@ -50,6 +58,7 @@ def ensure_app_layout() -> None:
         transcripts_dir(),
         app_home() / "workspaces",
         tasks_dir(),
+        memory_dir(),
     ):
         path.mkdir(parents=True, exist_ok=True)
 

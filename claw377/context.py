@@ -9,6 +9,12 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 WORKSPACE = PACKAGE_ROOT.parent.resolve()
 TEMPLATES_DIR = PACKAGE_ROOT / "templates"
 BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
+BOOTSTRAP_TITLES = {
+    "AGENTS.md": "Agent Operating Principles",
+    "SOUL.md": "Agent Style",
+    "USER.md": "User Preferences",
+    "TOOLS.md": "Tool Rules",
+}
 
 
 def _read_text(path: Path) -> str:
@@ -87,16 +93,28 @@ def _bootstrap_section() -> str:
     for name in BOOTSTRAP_FILES:
         content = _strip_title(_read_text(TEMPLATES_DIR / name))
         if content:
-            parts.append(f"## {name}\n{content}")
+            title = BOOTSTRAP_TITLES.get(name, name)
+            parts.append(f"## {title}\n{content}")
     if parts:
         return "# Workspace Bootstrap\n\n" + "\n\n".join(parts)
     return ""
 
 
-def _memory_section() -> str:
-    content = _strip_title(_read_text(TEMPLATES_DIR / "memory" / "MEMORY.md"))
+def default_memory_text() -> str:
+    return _read_text(TEMPLATES_DIR / "memory" / "MEMORY.md")
+
+
+def _memory_section(memory_text: str | None = None) -> str:
+    content = _strip_title(memory_text if memory_text is not None else default_memory_text())
     if content:
         return f"# Memory\n\n{content}"
+    return ""
+
+
+def _recent_archive_section(summary: str | None = None) -> str:
+    content = (summary or "").strip()
+    if content:
+        return f"# Recent Archive Summary\n\n{content}"
     return ""
 
 
@@ -155,17 +173,29 @@ def _list_skills() -> list[dict[str, str]]:
     return skills
 
 
-def _base_system_prompt() -> str:
+def _base_system_prompt(
+    *,
+    memory_text: str | None = None,
+    recent_archive_summary: str | None = None,
+) -> str:
     parts = [
         _identity_section(),
         _bootstrap_section(),
-        _memory_section(),
+        _memory_section(memory_text),
+        _recent_archive_section(recent_archive_summary),
     ]
     return "\n\n---\n\n".join(part for part in parts if part)
 
 
-def build_system_prompt() -> str:
-    system_prompt = _base_system_prompt()
+def build_system_prompt(
+    *,
+    memory_text: str | None = None,
+    recent_archive_summary: str | None = None,
+) -> str:
+    system_prompt = _base_system_prompt(
+        memory_text=memory_text,
+        recent_archive_summary=recent_archive_summary,
+    )
     now = datetime.now().astimezone()
     today = now.strftime("%Y-%m-%d")
     timezone_name = now.tzname() or "local timezone"
