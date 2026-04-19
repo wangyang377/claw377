@@ -22,6 +22,7 @@ from .app_paths import (
 from .consolidator import Consolidator
 from .context import build_system_prompt, default_memory_text
 from .memory_store import MemoryStore
+from .memory_writer import LongTermMemoryWriter
 from .session import Session
 from .tools import TOOLS, TOOL_HANDLERS
 from .tools.background import BG
@@ -35,6 +36,7 @@ session_meta: dict | None = None
 session_path: Path | None = None
 memory_store: MemoryStore | None = None
 consolidator: Consolidator | None = None
+memory_writer: LongTermMemoryWriter | None = None
 
 
 def now() -> str:
@@ -212,7 +214,12 @@ def stream_assistant_message(
 
 
 def agent_loop(runtime_session: Session) -> str:
-    if session_meta is None or session_path is None or consolidator is None:
+    if (
+        session_meta is None
+        or session_path is None
+        or consolidator is None
+        or memory_writer is None
+    ):
         raise RuntimeError("Session is not initialized")
     while True:
         # Drain background task notifications
@@ -234,6 +241,8 @@ def agent_loop(runtime_session: Session) -> str:
             build_prompt_messages=build_prompt_messages,
         ):
             print("[consolidated old messages]")
+            if memory_writer.maybe_update():
+                print("[updated long-term memory]")
             save_session(session_meta, runtime_session, session_path)
 
         assistant_message, finish_reason = stream_assistant_message(
@@ -289,6 +298,8 @@ def agent_loop(runtime_session: Session) -> str:
                     runtime_session.recent_archive_summary = (
                         f"{runtime_session.recent_archive_summary}\n\nFocus: {compact_focus}".strip()
                     )
+                if memory_writer.maybe_update():
+                    print("[updated long-term memory]")
                 save_session(session_meta, runtime_session, session_path)
 
 
@@ -369,12 +380,13 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     model = os.getenv("MODEL_NAME") or os.getenv("LITELLM_MODEL") or "unknown-model"
-    global session_meta, session_path, memory_store, consolidator
+    global session_meta, session_path, memory_store, consolidator, memory_writer
     session_meta, session_path = create_session(model)
     runtime_session = Session()
     memory_store = MemoryStore()
     memory_store.ensure_memory_file(default_memory_text())
     consolidator = Consolidator(memory_store, AUTO_COMPACT_THRESHOLD)
+    memory_writer = LongTermMemoryWriter(memory_store)
 
     if args.prompt:
         runtime_session.add({"role": "user", "content": f"{runtime_context()}\n\n{args.prompt}"})
